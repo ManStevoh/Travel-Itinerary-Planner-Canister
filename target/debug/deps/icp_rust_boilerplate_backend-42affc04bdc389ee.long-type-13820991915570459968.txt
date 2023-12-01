@@ -1,0 +1,1 @@
+Filter<std::iter::Map<ic_stable_structures::btreemap::Iter<'_, u64, TravelPlan, VirtualMemory<Rc<RefCell<std::vec::Vec<u8>>>>>, {closure@src/icp_rust_boilerplate_backend/src/lib.rs:228:47: 228:58}>, {closure@src/icp_rust_boilerplate_backend/src/lib.rs:231:21: 231:27}>

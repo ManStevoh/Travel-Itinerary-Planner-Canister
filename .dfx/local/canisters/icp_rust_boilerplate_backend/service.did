@@ -1,0 +1,67 @@
+type Accommodation = record {
+  id : nat64;
+  check_out_date : nat64;
+  check_in_date : nat64;
+  name : text;
+  cost_per_night : float64;
+  location : text;
+};
+type Error = variant {
+  DecodeError : record { msg : text };
+  NotFound : record { msg : text };
+};
+type Result = variant { Ok : Accommodation; Err : Error };
+type Result_1 = variant { Ok : Transportation; Err : Error };
+type Result_2 = variant { Ok : TravelPlan; Err : Error };
+type Result_3 = variant { Ok : float64; Err : Error };
+type Transportation = record {
+  id : nat64;
+  cost : float64;
+  mode : text;
+  departure_date : nat64;
+  arrival_date : nat64;
+};
+type TravelPlan = record {
+  id : nat64;
+  destination : text;
+  transportation : text;
+  activities : vec text;
+  end_date : nat64;
+  accommodation : text;
+  start_date : nat64;
+};
+type TravelPlanPayload = record {
+  destination : text;
+  transportation : text;
+  activities : vec text;
+  end_date : nat64;
+  accommodation : text;
+  start_date : nat64;
+};
+service : {
+  add_accommodation : (Accommodation) -> (opt Accommodation);
+  add_multiple_travel_plans : (vec TravelPlanPayload) -> (vec opt TravelPlan);
+  add_transportation : (Transportation) -> (opt Transportation);
+  add_travel_plan : (TravelPlanPayload) -> (opt TravelPlan);
+  calculate_travel_plan_duration : (nat64) -> (opt nat64) query;
+  count_travel_plans : () -> (nat64) query;
+  delete_accommodation : (nat64) -> (Result);
+  delete_transportation : (nat64) -> (Result_1);
+  delete_travel_plan : (nat64) -> (Result_2);
+  generate_shareable_link : (nat64) -> (opt text) query;
+  get_accommodation : (nat64) -> (Result) query;
+  get_next_available_id : () -> (nat64) query;
+  get_remaining_budget : () -> (float64) query;
+  get_transportation : (nat64) -> (Result_1) query;
+  get_travel_plan : (nat64) -> (Result_2) query;
+  get_travel_plan_by_link : (text) -> (Result_2) query;
+  get_travel_plans_page : (nat64, nat64) -> (vec TravelPlan) query;
+  record_expense : (float64) -> (Result_3);
+  set_budget : (float64) -> (float64);
+  update_accommodation : (nat64, Accommodation) -> (Result);
+  update_all_travel_plans : (vec record { nat64; TravelPlanPayload }) -> (
+      vec Result_2,
+    );
+  update_transportation : (nat64, Transportation) -> (Result_1);
+  update_travel_plan : (nat64, TravelPlanPayload) -> (Result_2);
+}
