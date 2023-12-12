@@ -8,11 +8,13 @@ type Accommodation = record {
 };
 type Error = variant {
   DecodeError : record { msg : text };
+  InvalidInput : record { msg : text };
   NotFound : record { msg : text };
+  NotOwner;
 };
-type Result = variant { Ok : Accommodation; Err : Error };
-type Result_1 = variant { Ok : Transportation; Err : Error };
-type Result_2 = variant { Ok : TravelPlan; Err : Error };
+type Result = variant { Ok : TravelPlan; Err : Error };
+type Result_1 = variant { Ok : Accommodation; Err : Error };
+type Result_2 = variant { Ok : Transportation; Err : Error };
 type Result_3 = variant { Ok : float64; Err : Error };
 type Transportation = record {
   id : nat64;
@@ -29,6 +31,7 @@ type TravelPlan = record {
   end_date : nat64;
   accommodation : text;
   start_date : nat64;
+  owner_principal : text;
 };
 type TravelPlanPayload = record {
   destination : text;
@@ -40,28 +43,28 @@ type TravelPlanPayload = record {
 };
 service : {
   add_accommodation : (Accommodation) -> (opt Accommodation);
-  add_multiple_travel_plans : (vec TravelPlanPayload) -> (vec opt TravelPlan);
+  add_multiple_travel_plans : (vec TravelPlanPayload) -> (vec Result);
   add_transportation : (Transportation) -> (opt Transportation);
-  add_travel_plan : (TravelPlanPayload) -> (opt TravelPlan);
+  add_travel_plan : (TravelPlanPayload) -> (Result);
   calculate_travel_plan_duration : (nat64) -> (opt nat64) query;
   count_travel_plans : () -> (nat64) query;
-  delete_accommodation : (nat64) -> (Result);
-  delete_transportation : (nat64) -> (Result_1);
-  delete_travel_plan : (nat64) -> (Result_2);
+  delete_accommodation : (nat64) -> (Result_1);
+  delete_transportation : (nat64) -> (Result_2);
+  delete_travel_plan : (nat64) -> (Result);
   generate_shareable_link : (nat64) -> (opt text) query;
-  get_accommodation : (nat64) -> (Result) query;
+  get_accommodation : (nat64) -> (Result_1) query;
   get_next_available_id : () -> (nat64) query;
   get_remaining_budget : () -> (float64) query;
-  get_transportation : (nat64) -> (Result_1) query;
-  get_travel_plan : (nat64) -> (Result_2) query;
-  get_travel_plan_by_link : (text) -> (Result_2) query;
+  get_transportation : (nat64) -> (Result_2) query;
+  get_travel_plan : (nat64) -> (Result) query;
+  get_travel_plan_by_link : (text) -> (Result) query;
   get_travel_plans_page : (nat64, nat64) -> (vec TravelPlan) query;
   record_expense : (float64) -> (Result_3);
   set_budget : (float64) -> (float64);
-  update_accommodation : (nat64, Accommodation) -> (Result);
+  update_accommodation : (nat64, Accommodation) -> (Result_1);
   update_all_travel_plans : (vec record { nat64; TravelPlanPayload }) -> (
-      vec Result_2,
+      vec Result,
     );
-  update_transportation : (nat64, Transportation) -> (Result_1);
-  update_travel_plan : (nat64, TravelPlanPayload) -> (Result_2);
+  update_transportation : (nat64, Transportation) -> (Result_2);
+  update_travel_plan : (nat64, TravelPlanPayload) -> (Result);
 }

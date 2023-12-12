@@ -3,6 +3,7 @@ extern crate serde;
 
 use candid::{Decode, Encode};
 use ic_cdk::api::time;
+use ic_cdk::caller;
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager, VirtualMemory};
 use ic_stable_structures::{BoundedStorable, Cell, DefaultMemoryImpl, StableBTreeMap, Storable};
 use std::{borrow::Cow, cell::RefCell};
@@ -14,6 +15,7 @@ type IdCell = Cell<u64, Memory>;
 #[derive(candid::CandidType, Clone, Serialize, Deserialize, Default)]
 struct TravelPlan {
     id: u64,
+    owner_principal: String,
     destination: String,
     start_date: u64,
     end_date: u64,
@@ -78,6 +80,12 @@ struct TravelPlanPayload {
 enum Error {
     NotFound { msg: String },
     DecodeError { msg: String },
+    InvalidInput { msg: String },
+    NotOwner
+}
+
+fn is_invalid_string(str: String) -> bool {
+    return str.trim().is_empty();
 }
 
 /// Retrieve a travel plan by ID.
@@ -93,18 +101,26 @@ fn get_travel_plan(id: u64) -> Result<TravelPlan, Error> {
 
 /// Add a new travel plan.
 #[ic_cdk::update]
-fn add_travel_plan(plan: TravelPlanPayload) -> Option<TravelPlan> {
+fn add_travel_plan(plan: TravelPlanPayload) -> Result<TravelPlan, Error> {
     // Validate that start_date is before end_date
     if plan.start_date >= plan.end_date {
-        return None;
+        return Err(Error::InvalidInput {
+            msg: format!(
+                "start date={} can't be greater than end date={}",
+                plan.start_date, plan.end_date
+            ),
+        });
     }
 
     // Validate that essential string fields are not empty
-    if plan.destination.is_empty()
-        || plan.transportation.is_empty()
-        || plan.accommodation.is_empty()
+    if is_invalid_string(plan.destination.clone())
+        || is_invalid_string(plan.transportation.clone())
+        || is_invalid_string(plan.accommodation.clone())
     {
-        return None;
+        return Err(Error::InvalidInput {
+            msg: format!("Input validations failed. Input data: {{destination: {}, transportation: {}, accommodation: {}}}",
+            plan.destination, plan.transportation, plan.accommodation)
+        });
     }
 
     let id = ID_COUNTER
@@ -119,6 +135,7 @@ fn add_travel_plan(plan: TravelPlanPayload) -> Option<TravelPlan> {
 
     let travel_plan = TravelPlan {
         id,
+        owner_principal: caller().to_string(),
         destination: plan.destination,
         start_date: plan.start_date,
         end_date: plan.end_date,
@@ -128,14 +145,37 @@ fn add_travel_plan(plan: TravelPlanPayload) -> Option<TravelPlan> {
     };
 
     do_insert_travel_plan(&travel_plan);
-    Some(travel_plan)
+    Ok(travel_plan)
 }
 
 /// Update an existing travel plan.
 #[ic_cdk::update]
 fn update_travel_plan(id: u64, payload: TravelPlanPayload) -> Result<TravelPlan, Error> {
+    // Validate that start_date is before end_date
+    if payload.start_date >= payload.end_date {
+        return Err(Error::InvalidInput {
+            msg: format!(
+                "start date={} can't be greater than end date={}",
+                payload.start_date, payload.end_date
+            ),
+        });
+    }
+
+    // Validate that essential string fields are not empty
+    if is_invalid_string(payload.destination.clone())
+        || is_invalid_string(payload.transportation.clone())
+        || is_invalid_string(payload.accommodation.clone())
+    {
+        return Err(Error::InvalidInput {
+            msg: format!("Input validations failed. Input data: {{destination: {}, transportation: {}, accommodation: {}}}",
+            payload.destination, payload.transportation, payload.accommodation)
+        });
+    }
     match TRAVEL_PLANS.with(|service| service.borrow().get(&id)) {
         Some(mut plan) => {
+            if plan.owner_principal != caller().to_string() {
+                return Err(Error::NotOwner)
+            }
             plan.destination = payload.destination;
             plan.start_date = payload.start_date;
             plan.end_date = payload.end_date;
@@ -146,7 +186,10 @@ fn update_travel_plan(id: u64, payload: TravelPlanPayload) -> Result<TravelPlan,
             Ok(plan)
         }
         None => Err(Error::NotFound {
-            msg: format!("couldn't update a travel plan with id={}. plan not found", id),
+            msg: format!(
+                "couldn't update a travel plan with id={}. plan not found",
+                id
+            ),
         }),
     }
 }
@@ -159,10 +202,21 @@ fn do_insert_travel_plan(plan: &TravelPlan) {
 /// Delete a travel plan by ID.
 #[ic_cdk::update]
 fn delete_travel_plan(id: u64) -> Result<TravelPlan, Error> {
+    let travel_plan_opt = _get_travel_plan(&id);
+    if travel_plan_opt.is_none() {
+        return Err(Error::NotFound { msg: format!("Travel plan with id={} not found", id) })
+    }
+    let travel_plan = travel_plan_opt.unwrap();
+    if travel_plan.owner_principal != caller().to_string() {
+        return Err(Error::NotOwner)
+    }
     match TRAVEL_PLANS.with(|service| service.borrow_mut().remove(&id)) {
         Some(plan) => Ok(plan),
         None => Err(Error::NotFound {
-            msg: format!("couldn't delete a travel plan with id={}. plan not found.", id),
+            msg: format!(
+                "couldn't delete a travel plan with id={}. plan not found.",
+                id
+            ),
         }),
     }
 }
@@ -174,7 +228,7 @@ fn _get_travel_plan(id: &u64) -> Option<TravelPlan> {
 
 /// Add multiple travel plans in a single call.
 #[ic_cdk::update]
-fn add_multiple_travel_plans(plans: Vec<TravelPlanPayload>) -> Vec<Option<TravelPlan>> {
+fn add_multiple_travel_plans(plans: Vec<TravelPlanPayload>) -> Vec<Result<TravelPlan, Error>> {
     plans
         .into_iter()
         .map(|plan| add_travel_plan(plan))
@@ -183,7 +237,9 @@ fn add_multiple_travel_plans(plans: Vec<TravelPlanPayload>) -> Vec<Option<Travel
 
 /// Update multiple travel plans in a single call.
 #[ic_cdk::update]
-fn update_all_travel_plans(payloads: Vec<(u64, TravelPlanPayload)>) -> Vec<Result<TravelPlan, Error>> {
+fn update_all_travel_plans(
+    payloads: Vec<(u64, TravelPlanPayload)>,
+) -> Vec<Result<TravelPlan, Error>> {
     payloads
         .into_iter()
         .map(|(id, payload)| update_travel_plan(id, payload))
@@ -199,15 +255,14 @@ fn get_next_available_id() -> u64 {
 /// Query to get a page of travel plans based on offset and limit.
 #[ic_cdk::query]
 fn get_travel_plans_page(offset: u64, limit: u64) -> Vec<TravelPlan> {
-    TRAVEL_PLANS
-        .with(|service| {
-            let plans = service
-                .borrow()
-                .range(offset..offset + limit)
-                .map(|(_, plan)| plan.clone())
-                .collect();
-            plans
-        })
+    TRAVEL_PLANS.with(|service| {
+        let plans = service
+            .borrow()
+            .range(offset..offset + limit)
+            .map(|(_, plan)| plan.clone())
+            .collect();
+        plans
+    })
 }
 
 /// Query to get the total number of travel plans.
@@ -380,7 +435,10 @@ fn add_accommodation(accommodation: Accommodation) -> Option<Accommodation> {
         })
         .expect("cannot increment id counter");
 
-    let accommodation = Accommodation { id, ..accommodation };
+    let accommodation = Accommodation {
+        id,
+        ..accommodation
+    };
 
     do_insert_accommodation(&accommodation);
     Some(accommodation)
@@ -388,7 +446,10 @@ fn add_accommodation(accommodation: Accommodation) -> Option<Accommodation> {
 
 /// Update an existing accommodation.
 #[ic_cdk::update]
-fn update_accommodation(id: u64, updated_accommodation: Accommodation) -> Result<Accommodation, Error> {
+fn update_accommodation(
+    id: u64,
+    updated_accommodation: Accommodation,
+) -> Result<Accommodation, Error> {
     match ACCOMMODATIONS.with(|service| service.borrow().get(&id)) {
         Some(mut accommodation) => {
             accommodation.name = updated_accommodation.name;
@@ -400,14 +461,21 @@ fn update_accommodation(id: u64, updated_accommodation: Accommodation) -> Result
             Ok(accommodation)
         }
         None => Err(Error::NotFound {
-            msg: format!("couldn't update an accommodation with id={}. accommodation not found", id),
+            msg: format!(
+                "couldn't update an accommodation with id={}. accommodation not found",
+                id
+            ),
         }),
     }
 }
 
 /// Insert an accommodation into the storage.
 fn do_insert_accommodation(accommodation: &Accommodation) {
-    ACCOMMODATIONS.with(|service| service.borrow_mut().insert(accommodation.id, accommodation.clone()));
+    ACCOMMODATIONS.with(|service| {
+        service
+            .borrow_mut()
+            .insert(accommodation.id, accommodation.clone())
+    });
 }
 
 /// Delete an accommodation by ID.
@@ -416,7 +484,10 @@ fn delete_accommodation(id: u64) -> Result<Accommodation, Error> {
     match ACCOMMODATIONS.with(|service| service.borrow_mut().remove(&id)) {
         Some(accommodation) => Ok(accommodation),
         None => Err(Error::NotFound {
-            msg: format!("couldn't delete an accommodation with id={}. accommodation not found.", id),
+            msg: format!(
+                "couldn't delete an accommodation with id={}. accommodation not found.",
+                id
+            ),
         }),
     }
 }
@@ -486,7 +557,10 @@ fn add_transportation(transportation: Transportation) -> Option<Transportation> 
         })
         .expect("cannot increment id counter");
 
-    let transportation = Transportation { id, ..transportation };
+    let transportation = Transportation {
+        id,
+        ..transportation
+    };
 
     do_insert_transportation(&transportation);
     Some(transportation)
@@ -494,7 +568,10 @@ fn add_transportation(transportation: Transportation) -> Option<Transportation> 
 
 /// Update an existing transportation booking.
 #[ic_cdk::update]
-fn update_transportation(id: u64, updated_transportation: Transportation) -> Result<Transportation, Error> {
+fn update_transportation(
+    id: u64,
+    updated_transportation: Transportation,
+) -> Result<Transportation, Error> {
     match TRANSPORTATIONS.with(|service| service.borrow().get(&id)) {
         Some(mut transportation) => {
             transportation.mode = updated_transportation.mode;
@@ -505,14 +582,21 @@ fn update_transportation(id: u64, updated_transportation: Transportation) -> Res
             Ok(transportation)
         }
         None => Err(Error::NotFound {
-            msg: format!("couldn't update a transportation booking with id={}. transportation not found", id),
+            msg: format!(
+                "couldn't update a transportation booking with id={}. transportation not found",
+                id
+            ),
         }),
     }
 }
 
 /// Insert a transportation booking into the storage.
 fn do_insert_transportation(transportation: &Transportation) {
-    TRANSPORTATIONS.with(|service| service.borrow_mut().insert(transportation.id, transportation.clone()));
+    TRANSPORTATIONS.with(|service| {
+        service
+            .borrow_mut()
+            .insert(transportation.id, transportation.clone())
+    });
 }
 
 /// Delete a transportation booking by ID.
@@ -521,7 +605,10 @@ fn delete_transportation(id: u64) -> Result<Transportation, Error> {
     match TRANSPORTATIONS.with(|service| service.borrow_mut().remove(&id)) {
         Some(transportation) => Ok(transportation),
         None => Err(Error::NotFound {
-            msg: format!("couldn't delete a transportation booking with id={}. transportation not found.", id),
+            msg: format!(
+                "couldn't delete a transportation booking with id={}. transportation not found.",
+                id
+            ),
         }),
     }
 }
